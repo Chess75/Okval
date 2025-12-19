@@ -108,7 +108,7 @@ opening_books:
 #     max_depth: 16                       # Half move max depth. (Comment this line for max depth)
 #     allow_repetitions: false            # Whether the book can create repetitions on the board. Can lead to unintentional draws.
       names:                              # List of names of books to use if there is no specific book for the time control, white, black or chess960.
-        - White
+        - FixBigBook
 #   Use the same pattern for 'bullet', 'blitz', 'rapid', 'classical', time controls in initial_minutes+increment_seconds format,
 #   'antichess', 'atomic', 'chess960', 'crazyhouse', 'horde', 'kingofthehill', 'racingkings' and '3check' as well.
 #   Append '_white', '_black', '_human', '_bot', '_rated', '_casual' and/or '_tournament'
@@ -255,7 +255,7 @@ online_blacklists:                        # List of URLs for online blacklists. 
 
 books:                                    # Names of the opening books (to be used above in the opening_books section) and paths to the opening books.
   #French: "engines/books/french.bin"
-  White: "engines/books/white.bin"
+  #White: "engines/books/white.bin"
   #SecondBook: "engines/books/Book2.bin"
   #ThirdBook: "engines/books/Book3.bin"
   #All: "engines/books/allb00k.bin"
@@ -263,3 +263,4 @@ books:                                    # Names of the opening books (to be us
   #Perfect2023: "engines/books/Perfect2023.bin"
   #chess960: "engines/books/chess960.bin"
   #chess960win: "engines/books/chess960-win.bin"
+  FixBigBook: "engines/books/fix_games1.bin"
