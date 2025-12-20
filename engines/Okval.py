@@ -108,6 +108,9 @@ def evaluate(board: chess.Board):
     if board.is_checkmate():
         return -INF + 1
 
+    if board.is_stalemate() or board.is_insufficient_material() or board.can_claim_threefold_repetition():
+        return 0
+
     material = 0
     pst_score = 0
 
@@ -125,16 +128,7 @@ def evaluate(board: chess.Board):
 
     score_white = material + pst_score
 
-    DRAW_THRESHOLD = 300  # ≈ пешка
-
-    if board.can_claim_threefold_repetition():
-        if abs(score_white) < DRAW_THRESHOLD:
-            return 0
-
-    if board.is_stalemate() or board.is_insufficient_material():
-        return 0
-
-    # --- Mobility ---
+    # --- Mobility (ослабленная) ---
     mobility = 2 * sum(1 for _ in board.legal_moves)
     score_white += mobility
 
@@ -190,6 +184,9 @@ def evaluate(board: chess.Board):
 
     # --- side to move ---
     return score_white if board.turn == chess.WHITE else -score_white
+
+
+
 
 # ---- TT и state ----
 class SearchState:
