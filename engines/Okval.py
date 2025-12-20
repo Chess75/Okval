@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
-# simple_engine_fixed.py
-# Исправленная и улучшенная версия UCI-движка на python-chess
-# Основные правки:
-# - Устранено двойное pop в корневом цикле и в обработке исключений
-# - Поиск запущен асинхронно (не блокирует основной UCI-loop) — поток сам печатает bestmove
-# - Корректное обновление history-heuristic (используется сторона, сделавшая ход)
-# - Улучшенное MVV-LVA (учтён en-passant)
-# - Безопасный подсчёт mobility
-# - Небольшие улучшения логирования и устойчивости к ошибкам
+
 
 import chess
 import sys
 import time
 import threading
 from collections import defaultdict, namedtuple
+import random as rnd
 
 INF = 99999999
+DRAW_PENALTY = 150      # штраф за повтор
+WIN_THRESHOLD = 200    # считаем позицию выигранной (cp)
+
 
 PIECE_VALUES = {
     chess.PAWN: 100,
@@ -26,8 +22,8 @@ PIECE_VALUES = {
     chess.KING: 20000
 }
 
-# Небольшие PST для примера
 PST = {
+
     chess.PAWN: [
          0,  0,  0,  0,  0,  0,  0,  0,
          5, 10, 10,-20,-20, 10, 10,  5,
@@ -38,6 +34,7 @@ PST = {
         50, 50, 50, 50, 50, 50, 50, 50,
          0,  0,  0,  0,  0,  0,  0,  0
     ],
+
     chess.KNIGHT: [
         -50,-40,-30,-30,-30,-30,-40,-50,
         -40,-20,  0,  5,  5,  0,-20,-40,
@@ -53,7 +50,30 @@ PST = {
 TTEntry = namedtuple("TTEntry", ["depth", "flag", "score", "best_move"])
 # flag: 'EXACT', 'LOWER', 'UPPER'
 
-# ---- Утилиты ----
+def calculate_think_time(remaining_time_ms):
+    t = remaining_time_ms / 1000  # seconds
+
+    if t >= 1800:      # 30 minutes
+        return rnd.uniform(20, 30)
+    elif t >= 1200:    # 20 minutes
+        return rnd.uniform(16, 25)
+    elif t >= 600:     # 10 minutes
+        return rnd.uniform(12, 20)
+    elif t >= 420:     # 7 minutes
+        return rnd.uniform(8, 15)
+    elif t >= 300:     # 5 minutes
+        return rnd.uniform(6, 12)
+    elif t >= 180:     # 3 minutes
+        return rnd.uniform(7, 12)
+    elif t >= 60:      # 1 minute
+        return rnd.uniform(4, 6)
+    elif t >= 30:
+        return rnd.uniform(1, 2)
+    elif t >= 4:
+        return rnd.uniform(0.5, 1)
+    else:
+        return 0.00    # panic
+
 
 def fast_board_key(board: chess.Board):
     return (board.board_fen(), board.turn, board.castling_xfen(), board.ep_square, board.halfmove_clock)
@@ -83,10 +103,7 @@ def mvv_lva_score(board, move):
 # ---- Оценка позиции ----
 
 def evaluate(board: chess.Board):
-    """
-    Оценка в сотых шахматной единицы (centipawns).
-    Возвращает оценку с точки зрения стороны, которая ходит (положительно — хорошо для side-to-move).
-    """
+
     if board.is_checkmate():
         return -INF + 1
     if board.is_stalemate() or board.is_insufficient_material():
@@ -95,23 +112,71 @@ def evaluate(board: chess.Board):
     material = 0
     pst_score = 0
 
+    # --- Material + PST ---
     for piece_type in PIECE_VALUES:
         for sq in board.pieces(piece_type, chess.WHITE):
             material += PIECE_VALUES[piece_type]
             if piece_type in PST:
                 pst_score += PST[piece_type][sq]
+
         for sq in board.pieces(piece_type, chess.BLACK):
             material -= PIECE_VALUES[piece_type]
             if piece_type in PST:
                 pst_score -= PST[piece_type][chess.square_mirror(sq)]
 
-    # mobility: безопасный подсчёт
-    mobility_count = sum(1 for _ in board.legal_moves)
-    mobility = 10 * mobility_count
+    score_white = material + pst_score
 
-    check_bonus = -50 if board.is_check() else 0
+    # --- Mobility (безопасно) ---
+    mobility = 5 * sum(1 for _ in board.legal_moves)
+    score_white += mobility
 
-    score_white = material + pst_score + mobility + check_bonus
+    # --- Check penalty ---
+    if board.is_check():
+        score_white -= 50
+
+    # --- Castling ---
+    CASTLE_BONUS = 40
+    NO_CASTLE_PENALTY = 20
+
+    # White
+    if not (board.has_kingside_castling_rights(chess.WHITE) or
+            board.has_queenside_castling_rights(chess.WHITE)):
+        if board.king(chess.WHITE) != chess.E1:
+            score_white += CASTLE_BONUS
+        else:
+            score_white -= NO_CASTLE_PENALTY
+
+    # Black
+    if not (board.has_kingside_castling_rights(chess.BLACK) or
+            board.has_queenside_castling_rights(chess.BLACK)):
+        if board.king(chess.BLACK) != chess.E8:
+            score_white -= CASTLE_BONUS
+        else:
+            score_white += NO_CASTLE_PENALTY
+
+    # --- Development ---
+    DEV_PENALTY = 10
+
+    for sq in (chess.B1, chess.G1, chess.C1, chess.F1):
+        if board.piece_at(sq):
+            score_white -= DEV_PENALTY
+
+    for sq in (chess.B8, chess.G8, chess.C8, chess.F8):
+        if board.piece_at(sq):
+            score_white += DEV_PENALTY
+
+    # --- King in center after opening ---
+    if board.fullmove_number > 10:
+        wk = board.king(chess.WHITE)
+        bk = board.king(chess.BLACK)
+
+        if wk in (chess.E1, chess.D1, chess.E2, chess.D2):
+            score_white -= 30
+
+        if bk in (chess.E8, chess.D8, chess.E7, chess.D7):
+            score_white += 30
+
+    # --- Return from side-to-move ---
     return score_white if board.turn == chess.WHITE else -score_white
 
 # ---- TT и state ----
@@ -162,7 +227,9 @@ def quiescence(board: chess.Board, alpha: int, beta: int, state: SearchState, st
 
 # ---- Negamax с alpha-beta и TT ----
 
-def negamax(board: chess.Board, depth: int, alpha: int, beta: int, state: SearchState, stop_event: threading.Event):
+def negamax(board: chess.Board, depth: int, alpha: int, beta: int,
+            state: SearchState, stop_event: threading.Event):
+
     if stop_event.is_set():
         raise SearchAbort()
     if state.start_time and (time.time() - state.start_time) > state.time_limit:
@@ -206,12 +273,18 @@ def negamax(board: chess.Board, depth: int, alpha: int, beta: int, state: Search
     for move in moves:
         if stop_event.is_set():
             raise SearchAbort()
-        mover = board.turn  # сторона, делающая ход
+
+        mover = board.turn
         board.push(move)
+
         try:
             score = -negamax(board, depth - 1, -beta, -alpha, state, stop_event)
         finally:
             board.pop()
+
+        if board.can_claim_threefold_repetition():
+            if score > WIN_THRESHOLD:
+                score -= DRAW_PENALTY
 
         if score > best_score:
             best_score = score
@@ -219,12 +292,10 @@ def negamax(board: chess.Board, depth: int, alpha: int, beta: int, state: Search
 
         if score > alpha:
             alpha = score
-            # обновляем history для хода, который привёл к улучшению
             if not board.is_capture(move):
                 state.history[(mover, move.from_square, move.to_square)] += 2 ** depth
 
         if alpha >= beta:
-            # beta-cutoff: запомним ход
             state.history[(mover, move.from_square, move.to_square)] += 2 ** depth
             break
 
@@ -235,8 +306,15 @@ def negamax(board: chess.Board, depth: int, alpha: int, beta: int, state: Search
     else:
         flag = 'EXACT'
 
-    state.tt[key] = TTEntry(depth=depth, flag=flag, score=best_score, best_move=best_move)
+    state.tt[key] = TTEntry(
+        depth=depth,
+        flag=flag,
+        score=best_score,
+        best_move=best_move
+    )
+
     return best_score
+
 
 # ---- SearchThread (итеративное углубление) ----
 class SearchThread(threading.Thread):
@@ -263,30 +341,18 @@ class SearchThread(threading.Thread):
         if self.movetime:
             return self.movetime
 
-        # определяем оставшееся время
         if self.root_board.turn == chess.WHITE:
             remaining = self.wtime
-            inc = self.winc
         else:
             remaining = self.btime
-            inc = self.binc
 
         if remaining is None:
-            return 10000
+            return 500  # 0.5 sec fallback
 
-        # ---- PANIC MODE (флаг падает) ----
-        # при <= 1 секунде поиск не имеет смысла
-        if remaining <= 1000:
-            return 0
+        think_sec = calculate_think_time(remaining)
 
-        # ---- LOW TIME MODE ----
-        # быстрый, неглубокий поиск
-        if remaining <= 3000:
-            return max(20, remaining // 40)
-
-        # ---- NORMAL MODE ----
-        # стандартное поведение, как было
-        return max(20, remaining // 20 + inc * 2)
+        # safety: minimum thinking time
+        return int(max(0.05, think_sec) * 1000)
 
     def run(self):
         ms = self.time_remaining_ms()
@@ -388,7 +454,7 @@ def uci_loop():
     board = chess.Board()
     search_thread = None
     stop_event = threading.Event()
-    print("id name Okval 1.2")
+    print("id name Okval 2.0")
     print("id author Classic")
     print("uciok")
     sys.stdout.flush()
@@ -405,7 +471,7 @@ def uci_loop():
             cmd = parts[0]
 
             if cmd == "uci":
-                print("id name Okval 1.2 FT")
+                print("id name Okval 2.0")
                 print("id author Classic")
                 print("uciok")
                 sys.stdout.flush()
@@ -505,4 +571,3 @@ def uci_loop():
 
 if __name__ == "__main__":
     uci_loop()
-
