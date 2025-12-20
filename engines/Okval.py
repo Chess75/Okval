@@ -107,8 +107,7 @@ def evaluate(board: chess.Board):
     # --- terminal ---
     if board.is_checkmate():
         return -INF + 1
-
-    if board.is_stalemate() or board.is_insufficient_material() or board.can_claim_threefold_repetition():
+    if board.is_stalemate() or board.is_insufficient_material():
         return 0
 
     material = 0
@@ -128,13 +127,14 @@ def evaluate(board: chess.Board):
 
     score_white = material + pst_score
 
-    # --- Mobility (ослабленная) ---
+    # --- Mobility (ослабленная!) ---
     mobility = 2 * sum(1 for _ in board.legal_moves)
     score_white += mobility
 
     # --- Check penalty ---
     if board.is_check():
         score_white -= 50
+
 
     wk = board.king(chess.WHITE)
     bk = board.king(chess.BLACK)
@@ -155,12 +155,13 @@ def evaluate(board: chess.Board):
 
     # --- Castling bonus ---
     CASTLE_BONUS = 50
+
     if wk in (chess.G1, chess.C1):
         score_white += CASTLE_BONUS
     if bk in (chess.G8, chess.C8):
         score_white -= CASTLE_BONUS
 
-    # --- Hanging queen ---
+
     HANGING_QUEEN_PENALTY = 900
 
     for sq in board.pieces(chess.QUEEN, chess.WHITE):
@@ -171,7 +172,7 @@ def evaluate(board: chess.Board):
         if board.is_attacked_by(chess.WHITE, sq):
             score_white += HANGING_QUEEN_PENALTY
 
-    # --- Development ---
+
     DEV_PENALTY = 8
 
     for sq in (chess.B1, chess.G1, chess.C1, chess.F1):
