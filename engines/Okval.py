@@ -104,10 +104,9 @@ def mvv_lva_score(board, move):
 
 def evaluate(board: chess.Board):
 
+    # --- terminal ---
     if board.is_checkmate():
         return -INF + 1
-    if board.is_stalemate() or board.is_insufficient_material():
-        return 0
 
     material = 0
     pst_score = 0
@@ -126,36 +125,60 @@ def evaluate(board: chess.Board):
 
     score_white = material + pst_score
 
-    # --- Mobility (безопасно) ---
-    mobility = 5 * sum(1 for _ in board.legal_moves)
+    DRAW_THRESHOLD = 300  # ≈ пешка
+
+    if board.can_claim_threefold_repetition():
+        if abs(score_white) < DRAW_THRESHOLD:
+            return 0
+
+    if board.is_stalemate() or board.is_insufficient_material():
+        return 0
+
+    # --- Mobility ---
+    mobility = 2 * sum(1 for _ in board.legal_moves)
     score_white += mobility
 
     # --- Check penalty ---
     if board.is_check():
         score_white -= 50
 
-    # --- Castling ---
-    CASTLE_BONUS = 40
-    NO_CASTLE_PENALTY = 20
+    wk = board.king(chess.WHITE)
+    bk = board.king(chess.BLACK)
 
-    # White
-    if not (board.has_kingside_castling_rights(chess.WHITE) or
-            board.has_queenside_castling_rights(chess.WHITE)):
-        if board.king(chess.WHITE) != chess.E1:
-            score_white += CASTLE_BONUS
-        else:
-            score_white -= NO_CASTLE_PENALTY
+    # --- Early king move penalty ---
+    if board.fullmove_number <= 10:
+        if wk != chess.E1:
+            score_white -= 80
+        if bk != chess.E8:
+            score_white += 80
 
-    # Black
-    if not (board.has_kingside_castling_rights(chess.BLACK) or
-            board.has_queenside_castling_rights(chess.BLACK)):
-        if board.king(chess.BLACK) != chess.E8:
-            score_white -= CASTLE_BONUS
-        else:
-            score_white += NO_CASTLE_PENALTY
+    # --- King in center later ---
+    if board.fullmove_number > 10:
+        if wk in (chess.E1, chess.D1, chess.E2, chess.D2):
+            score_white -= 30
+        if bk in (chess.E8, chess.D8, chess.E7, chess.D7):
+            score_white += 30
+
+    # --- Castling bonus ---
+    CASTLE_BONUS = 50
+    if wk in (chess.G1, chess.C1):
+        score_white += CASTLE_BONUS
+    if bk in (chess.G8, chess.C8):
+        score_white -= CASTLE_BONUS
+
+    # --- Hanging queen ---
+    HANGING_QUEEN_PENALTY = 900
+
+    for sq in board.pieces(chess.QUEEN, chess.WHITE):
+        if board.is_attacked_by(chess.BLACK, sq):
+            score_white -= HANGING_QUEEN_PENALTY
+
+    for sq in board.pieces(chess.QUEEN, chess.BLACK):
+        if board.is_attacked_by(chess.WHITE, sq):
+            score_white += HANGING_QUEEN_PENALTY
 
     # --- Development ---
-    DEV_PENALTY = 10
+    DEV_PENALTY = 8
 
     for sq in (chess.B1, chess.G1, chess.C1, chess.F1):
         if board.piece_at(sq):
@@ -165,18 +188,7 @@ def evaluate(board: chess.Board):
         if board.piece_at(sq):
             score_white += DEV_PENALTY
 
-    # --- King in center after opening ---
-    if board.fullmove_number > 10:
-        wk = board.king(chess.WHITE)
-        bk = board.king(chess.BLACK)
-
-        if wk in (chess.E1, chess.D1, chess.E2, chess.D2):
-            score_white -= 30
-
-        if bk in (chess.E8, chess.D8, chess.E7, chess.D7):
-            score_white += 30
-
-    # --- Return from side-to-move ---
+    # --- side to move ---
     return score_white if board.turn == chess.WHITE else -score_white
 
 # ---- TT и state ----
