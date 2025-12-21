@@ -103,92 +103,152 @@ def mvv_lva_score(board, move):
 # ---- Оценка позиции ----
 
 def evaluate(board: chess.Board):
-
-    # --- terminal ---
+    # ========= TERMINAL =========
     if board.is_checkmate():
         return -INF + 1
     if board.is_stalemate() or board.is_insufficient_material():
         return 0
 
+    score = 0
     material = 0
-    pst_score = 0
 
-    # --- Material + PST ---
-    for piece_type in PIECE_VALUES:
+    # ========= MATERIAL + PST =========
+    for piece_type, value in PIECE_VALUES.items():
         for sq in board.pieces(piece_type, chess.WHITE):
-            material += PIECE_VALUES[piece_type]
+            material += value
             if piece_type in PST:
-                pst_score += PST[piece_type][sq]
+                score += PST[piece_type][sq]
 
         for sq in board.pieces(piece_type, chess.BLACK):
-            material -= PIECE_VALUES[piece_type]
+            material -= value
             if piece_type in PST:
-                pst_score -= PST[piece_type][chess.square_mirror(sq)]
+                score -= PST[piece_type][chess.square_mirror(sq)]
 
-    score_white = material + pst_score
+    score += material
 
-    # --- Mobility (ослабленная!) ---
-    mobility = 2 * sum(1 for _ in board.legal_moves)
-    score_white += mobility
-
-    # --- Check penalty ---
-    if board.is_check():
-        score_white -= 50
+    # ========= GAME PHASE =========
+    endgame = material < 2400
 
     wk = board.king(chess.WHITE)
     bk = board.king(chess.BLACK)
 
-    # --- Early king move penalty ---
-    if board.fullmove_number <= 10:
-        if wk != chess.E1:
-            score_white -= 80
-        if bk != chess.E8:
-            score_white += 80
+    # ========= KING =========
+    if endgame:
+        score -= KING_ENDGAME_PST[wk]
+        score += KING_ENDGAME_PST[chess.square_mirror(bk)]
+    else:
+        if wk not in (chess.G1, chess.C1):
+            score -= 40
+        if bk not in (chess.G8, chess.C8):
+            score += 40
 
-    # --- King in center later ---
-    if board.fullmove_number > 10:
-        if wk in (chess.E1, chess.D1, chess.E2, chess.D2):
-            score_white -= 30
-        if bk in (chess.E8, chess.D8, chess.E7, chess.D7):
-            score_white += 30
+    # ========= BISHOP PAIR =========
+    if len(board.pieces(chess.BISHOP, chess.WHITE)) == 2:
+        score += 30
+    if len(board.pieces(chess.BISHOP, chess.BLACK)) == 2:
+        score -= 30
 
-    # --- Castling bonus ---
-    CASTLE_BONUS = 50
-    if wk in (chess.G1, chess.C1):
-        score_white += CASTLE_BONUS
-    if bk in (chess.G8, chess.C8):
-        score_white -= CASTLE_BONUS
+    # ========= PAWN STRUCTURE =========
+    PASSED_PAWN_BONUS = [0, 10, 20, 35, 60, 100, 140, 0]
 
-    HANGING_PENALTY = {
-        chess.PAWN:   120,
-        chess.KNIGHT: 350,
-        chess.BISHOP: 350,
-        chess.ROOK:   550,
-        chess.QUEEN:  1200,
-    }
+    def is_passed_pawn(sq, color):
+        file = chess.square_file(sq)
+        rank = chess.square_rank(sq)
+        direction = 1 if color == chess.WHITE else -1
+        enemy = not color
 
-    for piece_type, penalty in HANGING_PENALTY.items():
-        for sq in board.pieces(piece_type, chess.WHITE):
-            if board.is_attacked_by(chess.BLACK, sq) and not board.is_attacked_by(chess.WHITE, sq):
-                score_white -= penalty
+        for f in (file - 1, file, file + 1):
+            if 0 <= f <= 7:
+                r = rank + direction
+                while 0 <= r <= 7:
+                    p = board.piece_at(chess.square(f, r))
+                    if p and p.piece_type == chess.PAWN and p.color == enemy:
+                        return False
+                    r += direction
+        return True
 
-        for sq in board.pieces(piece_type, chess.BLACK):
-            if board.is_attacked_by(chess.WHITE, sq) and not board.is_attacked_by(chess.BLACK, sq):
-                score_white += penalty
+    for sq in board.pieces(chess.PAWN, chess.WHITE):
+        if is_passed_pawn(sq, chess.WHITE):
+            score += PASSED_PAWN_BONUS[chess.square_rank(sq)]
 
-    # --- Development ---
-    DEV_PENALTY = 8
+    for sq in board.pieces(chess.PAWN, chess.BLACK):
+        if is_passed_pawn(sq, chess.BLACK):
+            score -= PASSED_PAWN_BONUS[7 - chess.square_rank(sq)]
 
-    for sq in (chess.B1, chess.G1, chess.C1, chess.F1):
-        if board.piece_at(sq):
-            score_white -= DEV_PENALTY
+    # ========= ROOKS =========
+    def file_has_pawn(file, color):
+        for sq in board.pieces(chess.PAWN, color):
+            if chess.square_file(sq) == file:
+                return True
+        return False
 
-    for sq in (chess.B8, chess.G8, chess.C8, chess.F8):
-        if board.piece_at(sq):
-            score_white += DEV_PENALTY
+    ROOK_OPEN = 25
+    ROOK_SEMI = 15
+    ROOK_7TH = 30
 
-    # --- side to move ---
-    return score_white if board.turn == chess.WHITE else -score_white
+    for sq in board.pieces(chess.ROOK, chess.WHITE):
+        f = chess.square_file(sq)
+        if not file_has_pawn(f, chess.WHITE):
+            score += ROOK_OPEN if not file_has_pawn(f, chess.BLACK) else ROOK_SEMI
+        if chess.square_rank(sq) == 6:
+            score += ROOK_7TH
+
+    for sq in board.pieces(chess.ROOK, chess.BLACK):
+        f = chess.square_file(sq)
+        if not file_has_pawn(f, chess.BLACK):
+            score -= ROOK_OPEN if not file_has_pawn(f, chess.WHITE) else ROOK_SEMI
+        if chess.square_rank(sq) == 1:
+            score -= ROOK_7TH
+
+    # ========= KNIGHT OUTPOST =========
+    KNIGHT_OUTPOST = 25
+
+    def knight_outpost(sq, color):
+        rank = chess.square_rank(sq)
+        if color == chess.WHITE and rank < 3:
+            return False
+        if color == chess.BLACK and rank > 4:
+            return False
+
+        file = chess.square_file(sq)
+        enemy = not color
+        direction = 1 if color == chess.WHITE else -1
+
+        for df in (-1, 1):
+            f = file + df
+            if 0 <= f <= 7:
+                r = rank + direction
+                while 0 <= r <= 7:
+                    p = board.piece_at(chess.square(f, r))
+                    if p and p.piece_type == chess.PAWN and p.color == enemy:
+                        return False
+                    r += direction
+        return True
+
+    for sq in board.pieces(chess.KNIGHT, chess.WHITE):
+        if knight_outpost(sq, chess.WHITE):
+            score += KNIGHT_OUTPOST
+
+    for sq in board.pieces(chess.KNIGHT, chess.BLACK):
+        if knight_outpost(sq, chess.BLACK):
+            score -= KNIGHT_OUTPOST
+
+    # ========= SIMPLIFY WHEN WINNING =========
+    if material > 200:
+        score += 5 * (
+            len(board.pieces(chess.QUEEN, chess.BLACK)) +
+            len(board.pieces(chess.ROOK, chess.BLACK))
+        )
+
+    if material < -200:
+        score -= 5 * (
+            len(board.pieces(chess.QUEEN, chess.WHITE)) +
+            len(board.pieces(chess.ROOK, chess.WHITE))
+        )
+
+    # ========= SIDE TO MOVE =========
+    return score if board.turn == chess.WHITE else -score
+
 
 
 
