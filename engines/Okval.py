@@ -112,6 +112,18 @@ def evaluate(board: chess.Board):
     score = 0
     material = 0
 
+    KING_ENDGAME_PST = [
+    -50, -30, -30, -30, -30, -30, -30, -50,
+    -30, -10,   0,   0,   0,   0, -10, -30,
+    -30,   0,  10,  15,  15,  10,   0, -30,
+    -30,   0,  15,  20,  20,  15,   0, -30,
+    -30,   0,  15,  20,  20,  15,   0, -30,
+    -30,   0,  10,  15,  15,  10,   0, -30,
+    -30, -10,   0,   0,   0,   0, -10, -30,
+    -50, -30, -30, -30, -30, -30, -30, -50
+    ]
+
+
     # ========= MATERIAL + PST =========
     for piece_type, value in PIECE_VALUES.items():
         for sq in board.pieces(piece_type, chess.WHITE):
