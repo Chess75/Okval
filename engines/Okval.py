@@ -135,7 +135,6 @@ def evaluate(board: chess.Board):
     if board.is_check():
         score_white -= 50
 
-
     wk = board.king(chess.WHITE)
     bk = board.king(chess.BLACK)
 
@@ -155,24 +154,29 @@ def evaluate(board: chess.Board):
 
     # --- Castling bonus ---
     CASTLE_BONUS = 50
-
     if wk in (chess.G1, chess.C1):
         score_white += CASTLE_BONUS
     if bk in (chess.G8, chess.C8):
         score_white -= CASTLE_BONUS
 
+    HANGING_PENALTY = {
+        chess.PAWN:   120,
+        chess.KNIGHT: 350,
+        chess.BISHOP: 350,
+        chess.ROOK:   550,
+        chess.QUEEN:  1200,
+    }
 
-    HANGING_QUEEN_PENALTY = 900
+    for piece_type, penalty in HANGING_PENALTY.items():
+        for sq in board.pieces(piece_type, chess.WHITE):
+            if board.is_attacked_by(chess.BLACK, sq) and not board.is_attacked_by(chess.WHITE, sq):
+                score_white -= penalty
 
-    for sq in board.pieces(chess.QUEEN, chess.WHITE):
-        if board.is_attacked_by(chess.BLACK, sq):
-            score_white -= HANGING_QUEEN_PENALTY
+        for sq in board.pieces(piece_type, chess.BLACK):
+            if board.is_attacked_by(chess.WHITE, sq) and not board.is_attacked_by(chess.BLACK, sq):
+                score_white += penalty
 
-    for sq in board.pieces(chess.QUEEN, chess.BLACK):
-        if board.is_attacked_by(chess.WHITE, sq):
-            score_white += HANGING_QUEEN_PENALTY
-
-
+    # --- Development ---
     DEV_PENALTY = 8
 
     for sq in (chess.B1, chess.G1, chess.C1, chess.F1):
@@ -185,6 +189,7 @@ def evaluate(board: chess.Board):
 
     # --- side to move ---
     return score_white if board.turn == chess.WHITE else -score_white
+
 
 
 
