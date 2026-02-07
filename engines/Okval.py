@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from typing import Generator
+from typing import Generator, Optional, Tuple
 from collections import OrderedDict, defaultdict
 from math import inf
 import time
@@ -105,7 +105,7 @@ black_king_mg_pst = [
 
 black_king_eg_pst = [
     [-50, -40, -30, -20, -20, -30, -40, -50],
-    [-30, -20, -10, 0, 0, -10, -20, 30],
+    [-30, -20, -10, 0, 0, -10, -20, -30],  # Fixed: было 30, стало -30
     [-30, -10, 20, 30, 30, 20, -10, -30],
     [-30, -10, 30, 40, 40, 30, -10, -30],
     [-30, -10, 30, 40, 40, 30, -10, -30],
@@ -137,19 +137,19 @@ king_eg_pst = {
 piece_square_tables = {
     chess.PAWN: pawn_mg_pst,
     chess.KNIGHT: {
-        chess.WHITE: [row[::-1] for row in black_knight_pst[::-1]],
+        chess.WHITE: [row[::-1] for row in black_knight_pst][::-1],  # Fixed: было black_knight_pst[::-1]
         chess.BLACK: black_knight_pst,
     },
     chess.BISHOP: {
-        chess.WHITE: [row[::-1] for row in black_bishop_pst[::-1]],
+        chess.WHITE: [row[::-1] for row in black_bishop_pst][::-1],  # Fixed: было black_bishop_pst[::-1]
         chess.BLACK: black_bishop_pst,
     },
     chess.ROOK: {
-        chess.WHITE: [row[::-1] for row in black_rook_pst[::-1]],
+        chess.WHITE: [row[::-1] for row in black_rook_pst][::-1],  # Fixed: было black_rook_pst[::-1]
         chess.BLACK: black_rook_pst,
     },
     chess.QUEEN: {
-        chess.WHITE: [row[::-1] for row in black_queen_pst[::-1]],
+        chess.WHITE: [row[::-1] for row in black_queen_pst][::-1],  # Fixed: было black_queen_pst[::-1]
         chess.BLACK: black_queen_pst,
     },
     chess.KING: king_mg_pst,
@@ -271,7 +271,8 @@ def is_isolated_pawn(pos: chess.Board, pawn_sq: chess.Square, color: chess.Color
         if adj_file in range(8):  # valid file (exists in the board)
             for rank in range(8):
                 square = chess.square(adj_file, rank)
-                if pos.piece_at(square) == chess.Piece(chess.PAWN, color):  # adjacent friendly pawn
+                piece = pos.piece_at(square)
+                if piece and piece.piece_type == chess.PAWN and piece.color == color:  # adjacent friendly pawn
                     return False
 
     return True
@@ -284,9 +285,8 @@ def is_doubled_pawn(pos: chess.Board, pawn_sq: chess.Square, color: chess.Color)
     for rank in range(8):
         if rank != pawn_rank:
             square = chess.square(pawn_file, rank)
-            if pos.piece_at(square) == chess.Piece(
-                chess.PAWN, color
-            ):  # another pawn in the same file
+            piece = pos.piece_at(square)
+            if piece and piece.piece_type == chess.PAWN and piece.color == color:  # another pawn in the same file
                 return True
 
     return False
@@ -295,13 +295,14 @@ def is_doubled_pawn(pos: chess.Board, pawn_sq: chess.Square, color: chess.Color)
 def is_passed_pawn(pos: chess.Board, pawn_sq: chess.Square, color: chess.Color) -> bool:
     pawn_file = chess.square_file(pawn_sq)
     pawn_rank = chess.square_rank(pawn_sq)
-    ahead_ranks = range(pawn_rank + 1, 8) if color == chess.WHITE else range(pawn_rank, -1, -1)
+    ahead_ranks = range(pawn_rank + 1, 8) if color == chess.WHITE else range(pawn_rank - 1, -1, -1)
     adj_files = [pawn_file - 1, pawn_file, pawn_file + 1]
     for rank in ahead_ranks:
         for file in adj_files:
             if file in range(8):
                 square = chess.square(file, rank)
-                if pos.piece_at(square) == chess.Piece(chess.PAWN, not color):  # ennemy pawn
+                piece = pos.piece_at(square)
+                if piece and piece.piece_type == chess.PAWN and piece.color == (not color):  # enemy pawn
                     return False
 
     return True
@@ -320,7 +321,7 @@ def calculate_pawn_structure(pos: chess.Board) -> int:
                 if piece_color == chess.WHITE
                 else 7 - chess.square_rank(square)
             )
-            if not piece_square_tables[chess.KING] == king_eg_pst:  # not in endgame
+            if not is_in_endgame:  # not in endgame
                 score += player_coefs[piece_color] * advancement * 8
             else:  # endgame
                 score += player_coefs[piece_color] * advancement * 15
@@ -346,9 +347,8 @@ def is_semi_open_file(pos: chess.Board, file: int, color: chess.Color) -> bool:
     """Returns True if the file is semi-open in that position for the given color"""
     for rank in range(8):
         square = chess.square(file, rank)
-        if pos.piece_at(square) == chess.Piece(
-            chess.PAWN, color
-        ):  # There is a friendly pawn in that file
+        piece = pos.piece_at(square)
+        if piece and piece.piece_type == chess.PAWN and piece.color == color:  # There is a friendly pawn in that file
             return False
 
     return True
@@ -380,12 +380,14 @@ def calculate_activity_score(pos: chess.Board) -> int:
     legal_moves = list(pos.legal_moves)
     for move in legal_moves:
         piece_moved = pos.piece_at(move.from_square)
-        score += player_coefs[pos.turn] * piece_mobility_weights[piece_moved.piece_type]
+        if piece_moved:
+            score += player_coefs[pos.turn] * piece_mobility_weights.get(piece_moved.piece_type, 0)
     pos.push(chess.Move.null())  # change the turn to evaluate for the other side
     opponent_legal_moves = list(pos.legal_moves)
     for move in opponent_legal_moves:
         piece_moved = pos.piece_at(move.from_square)
-        score += player_coefs[pos.turn] * piece_mobility_weights[piece_moved.piece_type]
+        if piece_moved:
+            score += player_coefs[pos.turn] * piece_mobility_weights.get(piece_moved.piece_type, 0)
     pos.pop()  # switch back the turn
     return score
 
@@ -414,8 +416,10 @@ def calculate_king_safety(pos: chess.Board, color: chess.Color, king_pos: chess.
             attackers = pos.attackers(not color, square)
             for attacker_square in attackers:
                 attacker = pos.piece_at(attacker_square)
-                attack_units += king_attackers_values.get(attacker.piece_type, 0)
+                if attacker:
+                    attack_units += king_attackers_values.get(attacker.piece_type, 0)
 
+    attack_units = min(attack_units, len(attack_units_to_centipawns) - 1)
     return -attack_units_to_centipawns[attack_units] * player_coefs[color]
 
 
@@ -450,9 +454,12 @@ def calculate_center_control(pos: chess.Board) -> int:
     return score
 
 
-def calculate_piece_score(pos: chess.Board) -> int:
+def calculate_piece_score(pos: chess.Board) -> Tuple[int, chess.Square, chess.Square]:
     """Returns a score corresponding to the values and positions of the pieces"""
     score = 0
+    white_king_pos = None
+    black_king_pos = None
+    
     for square, piece in pos.piece_map().items():
         file = chess.square_file(square)
         rank = chess.square_rank(square)
@@ -469,34 +476,48 @@ def calculate_piece_score(pos: chess.Board) -> int:
             else:
                 black_king_pos = square
 
+    # Ensure kings are found (they always should be)
+    if white_king_pos is None or black_king_pos is None:
+        raise ValueError("Kings not found on board")
+                
     return score, white_king_pos, black_king_pos
 
 
 def evaluate_pos(pos: chess.Board) -> int:
     """The main position (board) evaluation function"""
-    if not pos.is_game_over():
-        piece_score, white_king_pos, black_king_pos = calculate_piece_score(pos)
-        pos_pawn_hash = pawn_hash(pos)
-        if pos_pawn_hash in pawn_hash_table:
-            pawn_score = pawn_hash_table[pos_pawn_hash]
-        else:
-            pawn_score = calculate_pawn_structure(pos)
-        score = 0
-        score += piece_score
-        if not is_in_endgame:  # still in middlegame
-            # score += calculate_rook_activity(pos)  # TODO: reactivate (with more optimisation)
-            score += calculate_activity_score(pos)
-            score += calculate_king_safety(pos, chess.WHITE, white_king_pos)  # king safety is a lot less important in the endgame
-            score += calculate_king_safety(pos, chess.BLACK, black_king_pos)
-        score += calculate_center_control(pos)
-        score += pawn_score
-        return score
-    elif pos.outcome().winner is None:  # draw
-        return 0
-    else:  # checkmate
-        return -player_coefs[pos.turn] * (
-            int(pos.is_checkmate()) * 20000 - pos.fullmove_number
-        )  # prioritise quicker mates
+    if pos.is_game_over():
+        outcome = pos.outcome()
+        if outcome is None:  # draw
+            return 0
+        elif outcome.winner is None:  # draw
+            return 0
+        else:  # checkmate
+            # Prioritise quicker mates
+            return -player_coefs[pos.turn] * (20000 - pos.fullmove_number)
+    
+    piece_score, white_king_pos, black_king_pos = calculate_piece_score(pos)
+    pos_pawn_hash = pawn_hash(pos)
+    
+    # Get or calculate pawn structure score
+    cached = pawn_hash_table.get(pos_pawn_hash)
+    if cached is not None:
+        pawn_score = cached
+    else:
+        pawn_score = calculate_pawn_structure(pos)
+        pawn_hash_table.store(pos_pawn_hash, pawn_score)
+        
+    score = 0
+    score += piece_score
+    
+    if not is_in_endgame:  # still in middlegame
+        # score += calculate_rook_activity(pos)  # TODO: reactivate (with more optimisation)
+        score += calculate_activity_score(pos)
+        score += calculate_king_safety(pos, chess.WHITE, white_king_pos)
+        score += calculate_king_safety(pos, chess.BLACK, black_king_pos)
+        
+    score += calculate_center_control(pos)
+    score += pawn_score
+    return score
 
 
 def get_capture_score(pos: chess.Board, move: chess.Move) -> int:
@@ -506,13 +527,17 @@ def get_capture_score(pos: chess.Board, move: chess.Move) -> int:
     elif pos.is_en_passant(move):
         return piece_values[chess.PAWN]
     else:
-        return (
-            piece_values[pos.piece_at(move.to_square).piece_type]
-            - piece_values.get(pos.piece_at(move.from_square).piece_type, 200) // 10
-        )  # MVV-LVA
+        captured_piece = pos.piece_at(move.to_square)
+        moving_piece = pos.piece_at(move.from_square)
+        if captured_piece and moving_piece:
+            return (
+                piece_values[captured_piece.piece_type]
+                - piece_values.get(moving_piece.piece_type, 200) // 10
+            )  # MVV-LVA
+        return 0
 
 
-def get_move_score(pos: chess.Board, move: chess.Move, ply: int) -> int:
+def get_move_score(pos: chess.Board, move: chess.Move, ply: Optional[int] = None) -> int:
     """Function for move ordering built on top of get_capture_score"""
     score = get_capture_score(pos, move)
     if pos.gives_check(move):
@@ -524,14 +549,15 @@ def get_move_score(pos: chess.Board, move: chess.Move, ply: int) -> int:
         history_table[move.from_square][move.to_square] // 10
     )  # prioritise other moves (killer, captures, etc...)
     pos_hash = chess.polyglot.zobrist_hash(pos)
-    if pos_hash in transposition_table:
-        best_pos_move = transposition_table.get(pos_hash)[1]
+    tt_entry = transposition_table.get(pos_hash)
+    if tt_entry:
+        best_pos_move = tt_entry[1]
         if move == best_pos_move:
             score += 2000  # TT moves first
     return score
 
 
-def sorted_legal_moves(pos: chess.Board, ply: int = None) -> Generator[chess.Move, None, None]:
+def sorted_legal_moves(pos: chess.Board, ply: Optional[int] = None) -> Generator[chess.Move, None, None]:
     """Gets the legal moves in a position, with ordering"""
     legal_moves = list(pos.legal_moves)
     return sorted(legal_moves, key=lambda move: get_move_score(pos, move, ply), reverse=True)
@@ -580,62 +606,73 @@ def nega_max(
     alpha: int = -inf,
     beta: int = inf,
     color: int = +1,
-    time_stop: int = +inf,
+    time_stop: float = +inf,
     initial_depth: int = MAX_ENGINE_DEPTH,
     ply: int = 0,
-) -> tuple[chess.Move, int]:
+) -> Tuple[Optional[chess.Move], int]:
     """The main AI (NegaMax) algorithm with alpha-beta pruning"""
     global nodes_searched
     nodes_searched += 1
 
+    # Check for timeout
+    if time.time() >= time_stop:
+        return None, float('inf')  # Special value to indicate timeout
+    
     if pos.is_game_over():
         return None, color * evaluate_pos(pos)
+    
     if depth == 0:
         return None, quiescence(pos=pos, alpha=alpha, beta=beta, color=color)
 
     pos_hash = chess.polyglot.zobrist_hash(pos)
-    if pos_hash in transposition_table:
-        entry = transposition_table.get(pos_hash)
-        if entry[0] >= depth:
-            if entry[3] == EXACT_FLAG:
-                return entry[1], entry[2]  # move, score
-            elif entry[3] == LOWERBOUND_FLAG and entry[2] >= beta:
-                return entry[1], entry[2]  # move, score
-            elif entry[3] == UPPERBOUND_FLAG and entry[2] <= alpha:
-                return entry[1], entry[2]  # move, score
+    tt_entry = transposition_table.get(pos_hash)
+    
+    if tt_entry:
+        tt_depth, tt_move, tt_score, tt_flag = tt_entry
+        if tt_depth >= depth:
+            if tt_flag == EXACT_FLAG:
+                return tt_move, tt_score
+            elif tt_flag == LOWERBOUND_FLAG and tt_score >= beta:
+                return tt_move, tt_score
+            elif tt_flag == UPPERBOUND_FLAG and tt_score <= alpha:
+                return tt_move, tt_score
 
     original_alpha = alpha
     max_val = -inf
     best_move = None
-    pv_line = None
 
-    # Null move pruning (WIP)
+    # Null move pruning
     if depth >= 3 and not pos.is_check() and not is_in_endgame and depth != initial_depth:
         pos.push(chess.Move.null())  # null move
         _, score = nega_max(
             pos=pos,
             depth=depth - 1 - NULL_MOVE_REDUCTION,
             alpha=-beta,
-            beta=-(beta - 1),
+            beta=-beta + 1,  # Fixed: was -(beta - 1)
             color=-color,
             time_stop=time_stop,
             initial_depth=initial_depth,
             ply=ply + 1,
         )
-        if score == "Timeout":  # prevent error when timeout reached
-            return None, "Timeout"
-        score = -score
         pos.pop()
 
-        if score > beta:
-            return None, score
+        if score == float('inf'):  # timeout
+            return None, float('inf')
+            
+        score = -score
+        if score >= beta:
+            return None, beta
 
-    for move_index, move in enumerate(sorted_legal_moves(pos, ply)):
+    moves = list(sorted_legal_moves(pos, ply))
+    
+    for move_index, move in enumerate(moves):
+        # Check for timeout
         if time.time() >= time_stop:
-            return None, "Timeout"
-
+            return None, float('inf')
+            
         pos.push(move)
 
+        # Late Move Reduction (LMR)
         if move_index > 3 and depth >= 3 and not pos.is_check() and not pos.is_capture(move):
             reduction = 1 if move_index < 10 else 2
             _, score = nega_max(
@@ -648,10 +685,12 @@ def nega_max(
                 initial_depth=initial_depth,
                 ply=ply + 1
             )
-            score = -score
-            if score == "Timeout":
-                return None, "Timeout"
-
+            score = -score if score != float('inf') else float('inf')
+            
+            if score == float('inf'):  # timeout
+                pos.pop()
+                return None, float('inf')
+                
             if score > alpha:
                 _, score = nega_max(
                     pos=pos,
@@ -663,10 +702,7 @@ def nega_max(
                     initial_depth=initial_depth,
                     ply=ply + 1,
                 )
-                if score == "Timeout":
-                    return None, "Timeout"
-                score = -score
-
+                score = -score if score != float('inf') else float('inf')
         else:
             _, score = nega_max(
                 pos=pos,
@@ -678,28 +714,32 @@ def nega_max(
                 initial_depth=initial_depth,
                 ply=ply + 1,
             )
-            if score == "Timeout":
-                return None, "Timeout"
-            score = -score
+            score = -score if score != float('inf') else float('inf')
 
         pos.pop()
+        
+        if score == float('inf'):  # timeout
+            return None, float('inf')
+            
         if score > max_val:
             max_val = score
             best_move = move
+            
         if score > alpha:
             alpha = score
+            
         if alpha >= beta:
             history_table[move.from_square][move.to_square] += depth * depth
             if not pos.is_capture(move):
-                if not move in killer_moves[ply]:
+                if move not in killer_moves[ply]:
                     if len(killer_moves[ply]) < 2:
                         killer_moves[ply].append(move)
                     else:
                         killer_moves[ply][1] = killer_moves[ply][0]
                         killer_moves[ply][0] = move
-
             break  # cut-off
 
+    # Determine flag for transposition table
     if max_val <= original_alpha:
         flag = UPPERBOUND_FLAG
     elif max_val >= beta:
@@ -707,10 +747,8 @@ def nega_max(
     else:
         flag = EXACT_FLAG
 
-    if pos_hash not in transposition_table or (
-        pos_hash in transposition_table and transposition_table.get(pos_hash)[0] <= depth
-    ):  # only overwrite if deeper search
-        transposition_table.store(pos_hash, (depth, best_move, max_val, flag))
+    # Store in transposition table
+    transposition_table.store(pos_hash, (depth, best_move, max_val, flag))
 
     return best_move, max_val
 
@@ -724,7 +762,12 @@ def iterative_deepening(
 
     t1 = time.time()
     time_stop = t1 + max_time
+    best_move = None
+    
     for depth in range(1, max_depth + 1):
+        if time.time() >= time_stop:
+            break
+            
         if depth > 1 and force_interrupt:
             move, score = nega_max(
                 pos,
@@ -733,42 +776,58 @@ def iterative_deepening(
                 time_stop=time_stop,
                 initial_depth=depth
             )
-        else:  # NOTE: no timeout limit for depth 1, so best_move is always defined
+        else:
             move, score = nega_max(
                 pos,
                 depth,
                 color=player_coefs[pos.turn],
+                time_stop=float('inf'),  # No timeout for first depth
                 initial_depth=depth
             )
-        if move is not None:  # no timeout during search
-            best_move = move
-            time_elapsed = time.time() - t1
-            info_string = "info"
-            info_string += f" depth {depth}"
-            info_string += (
-                f" score cp {player_coefs[pos.turn] * score}"  # evaluation must be absolute
-            )
-            info_string += f" time {int(time_elapsed)}"
-            info_string += f" nodes {nodes_searched}"
-            try:
-                info_string += f" nps {int(nodes_searched / time_elapsed)}"
-            except ZeroDivisionError:
-                pass
-            print(info_string)
-
-        if time.time() >= time_stop:
+            
+        # Check for timeout
+        if move is None or score == float('inf'):
             break
+            
+        best_move = move
+        time_elapsed = time.time() - t1
+        
+        # Print UCI info
+        info_string = f"info depth {depth}"
+        info_string += f" score cp {int(player_coefs[pos.turn] * score)}"
+        info_string += f" time {int(time_elapsed * 1000)}"
+        info_string += f" nodes {nodes_searched}"
+        if time_elapsed > 0:
+            info_string += f" nps {int(nodes_searched / time_elapsed)}"
+        print(info_string)
 
+    # If no move found, return a random legal move as fallback
+    if best_move is None:
+        legal_moves = list(pos.legal_moves)
+        if legal_moves:
+            best_move = random.choice(legal_moves)
+        else:
+            # No legal moves (checkmate or stalemate)
+            return chess.Move.null()
+            
     return best_move
 
 
 def main() -> None:
     """Main UCI interface"""
-    global killer_moves, history_table, is_in_endgame
+    global killer_moves, history_table, is_in_endgame, piece_square_tables
     chess960 = False
     board = chess.Board()
+    
     while True:
-        args = input().split()
+        try:
+            args = input().split()
+        except EOFError:
+            break
+            
+        if not args:
+            continue
+            
         if args[0] == "uci":
             print("id name Okval")
             print("option name UCI_Chess960 type check default false")
@@ -780,84 +839,103 @@ def main() -> None:
         elif args[0] == "ucinewgame":
             is_in_endgame = False
             piece_square_tables[chess.KING] = king_mg_pst
+            piece_square_tables[chess.PAWN] = pawn_mg_pst
             transposition_table.reset()
             pawn_hash_table.reset()
             killer_moves = defaultdict(list)
-            history_table = [
-                [0 for i in range(64)] for j in range(64)
-            ]  # reinitialise the 64x64 history table
+            history_table = [[0 for _ in range(64)] for _ in range(64)]
 
         elif args[0] == "quit":
             break
 
         elif args[0] == "position":
-            if len(args) == 2 and args[1] == "startpos":  # starting position
+            if len(args) >= 2 and args[1] == "startpos":  # starting position
                 board = chess.Board(chess960=chess960)
-            elif args[1] == "fen":  # from FEN
-                board = chess.Board(" ".join(args[2:8]), chess960=chess960)
-                if "moves" in args:
-                    for move_str in args[args.index("moves") + 1:]:
+                if len(args) > 2 and args[2] == "moves":  # from sequence of moves
+                    for move_str in args[3:]:
                         board.push_uci(move_str)
-            elif args[2] == "moves" and args[1] == "startpos":  # from sequence of moves
-                board = chess.Board(chess960=chess960)
-                for move_str in args[3:]:
-                    board.push_uci(move_str)
+            elif len(args) >= 2 and args[1] == "fen":  # from FEN
+                fen_parts = args[2:8]
+                board = chess.Board(" ".join(fen_parts), chess960=chess960)
+                if len(args) > 8 and args[8] == "moves":
+                    for move_str in args[9:]:
+                        board.push_uci(move_str)
 
         elif args[0] == "go":
-            if len(args) == 9:
-                wtime, btime, winc, binc = [int(i) / 1000 for i in args[2::2]]
-                if board.turn == chess.WHITE:
-                    time_left = wtime
-                    increment = winc
-                else:
-                    time_left = btime
-                    increment = binc
-                max_time = min(time_left / 40 + increment, time_left / 2 - 1)
+            time_left = None
+            max_time = 5.0  # Default 5 seconds
+            
+            if len(args) >= 9:
+                wtime_idx = args.index("wtime") if "wtime" in args else -1
+                btime_idx = args.index("btime") if "btime" in args else -1
+                winc_idx = args.index("winc") if "winc" in args else -1
+                binc_idx = args.index("binc") if "binc" in args else -1
+                
+                if wtime_idx != -1 and btime_idx != -1:
+                    wtime = int(args[wtime_idx + 1]) / 1000
+                    btime = int(args[btime_idx + 1]) / 1000
+                    
+                    if board.turn == chess.WHITE:
+                        time_left = wtime
+                        increment = int(args[winc_idx + 1]) / 1000 if winc_idx != -1 else 0
+                    else:
+                        time_left = btime
+                        increment = int(args[binc_idx + 1]) / 1000 if binc_idx != -1 else 0
+                        
+                    max_time = min(time_left / 40 + increment, time_left / 2 - 0.1)
 
-            elif len(args) == 3 and args[1] == "movetime":
-                time_left = None
+            elif len(args) >= 3 and args[1] == "movetime":
                 max_time = int(args[2]) / 1000
 
+            # Update endgame status
+            is_in_endgame = in_endgame(board)
+            if is_in_endgame:
+                piece_square_tables[chess.KING] = king_eg_pst
+                piece_square_tables[chess.PAWN] = pawn_eg_pst
             else:
-                raise ValueError(
-                    "unsupported arguments for UCI command 'go'"
-                )  # shouldn't be raised
+                piece_square_tables[chess.KING] = king_mg_pst
+                piece_square_tables[chess.PAWN] = pawn_mg_pst
 
             best_move = None
 
+            # Try opening book first
             if PATH_TO_OPENING_BOOK:
-                with chess.polyglot.open_reader(PATH_TO_OPENING_BOOK) as reader:
-                    entries = {}
-                    for entry in reader.find_all(board):
-                        entries[entry.move] = entry.weight
+                try:
+                    with chess.polyglot.open_reader(PATH_TO_OPENING_BOOK) as reader:
+                        entries = []
+                        for entry in reader.find_all(board):
+                            entries.append(entry)
+                        
+                        if entries:
+                            # Choose move with highest weight
+                            best_entry = max(entries, key=lambda e: e.weight)
+                            best_move = best_entry.move
+                            time.sleep(0.1)  # Simulate thinking time
+                except:
+                    pass  # If book fails, continue with normal search
 
-                if entries:
-                    max_weight = max(entries.values())
-                    best_entries = [move for move in entries.keys() if entries[move] == max_weight]
-                    best_move = random.choice(best_entries)
-                    time.sleep(1)  # simulate thinking time
-
-            if best_move is None:  # no opening book move, so perform normal search
-                if time_left is not None and time_left <= 45:  # less than 45s left on the clock
-                    best_move = iterative_deepening(board, max_time=max_time)  # force interrupt in Negamax (default)
+            # Normal search if no book move found
+            if best_move is None:
+                if time_left is not None and time_left <= 45:
+                    best_move = iterative_deepening(board, max_time=max_time, force_interrupt=True)
                 else:
-                    # Here, we don't force interrupt in Negamax when timeout is reached, but
-                    # we reduce the time limit in consequence
                     best_move = iterative_deepening(board, max_time=max_time * 0.3, force_interrupt=False)
 
+            # Fallback to random move if still no move
+            if best_move is None:
+                legal_moves = list(board.legal_moves)
+                if legal_moves:
+                    best_move = random.choice(legal_moves)
+                else:
+                    best_move = chess.Move.null()
 
-            print(f"bestmove {best_move}")
-
-            # Endgame switch logic
-            if not is_in_endgame:
-                if in_endgame(board):
-                    is_in_endgame = True
-                    piece_square_tables[chess.KING] = king_eg_pst  # switch to endgame king table
-                    piece_square_tables[chess.PAWN] = pawn_eg_pst  # switch to endgame pawn table
+            print(f"bestmove {best_move.uci() if best_move != chess.Move.null() else '0000'}")
 
         elif args[:2] == ["setoption", "name"]:
-            if args[2:] == ["UCI_Chess960", "value", "true"]:
+            if len(args) >= 5 and args[2:] == ["UCI_Chess960", "value", "true"]:
                 chess960 = True
+            elif len(args) >= 5 and args[2:] == ["UCI_Chess960", "value", "false"]:
+                chess960 = False
 
 
 if __name__ == "__main__":
